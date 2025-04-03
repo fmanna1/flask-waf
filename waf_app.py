@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 import re
 import logging
+import os
 
 app = Flask(__name__)
 
@@ -10,6 +11,13 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
+
+# --- OWASP Top 10 2021 Mapping ---
+OWASP_CATEGORIES = {
+    "SQL Injection": "A03:2021-Injection",
+    "XSS": "A03:2021-Injection (XSS included)",
+    "CSRF": "A01:2021-Broken Access Control (Token Validation)"
+}
 
 # --- Attack Signatures ---
 SQLI_PATTERNS = [
@@ -25,13 +33,16 @@ XSS_PATTERNS = [
     r"(?i)javascript:",
     r"(?i)onerror\s*=",
     r"(?i)<img\s+.*?on\w+=.*?>",
+    r"(?i)<.*?(alert|prompt|confirm)\s*\(",
+    r"&lt;script&gt;"
 ]
 
 CSRF_TOKENS_REQUIRED = True
 
 # --- Helper Functions ---
 def log_attack(ip, pattern_type, payload):
-    logging.warning(f"Blocked {pattern_type} attack from {ip}. Payload: {payload}")
+    owasp_category = OWASP_CATEGORIES.get(pattern_type, "Uncategorized")
+    logging.warning(f"Blocked {pattern_type} attack (OWASP: {owasp_category}) from {ip}. Payload: {payload}")
 
 def contains_attack_patterns(payload, patterns):
     for pattern in patterns:
@@ -56,19 +67,28 @@ def waf_filter():
     # Check for SQL Injection
     if pattern := contains_attack_patterns(full_data, SQLI_PATTERNS):
         log_attack(ip, "SQL Injection", full_data)
-        return jsonify({"error": "Blocked: SQL Injection detected"}), 403
+        return jsonify({
+            "error": "Blocked: SQL Injection detected",
+            "owasp_category": OWASP_CATEGORIES["SQL Injection"]
+        }), 403
 
     # Check for XSS
     if pattern := contains_attack_patterns(full_data, XSS_PATTERNS):
         log_attack(ip, "XSS", full_data)
-        return jsonify({"error": "Blocked: XSS attempt detected"}), 403
+        return jsonify({
+            "error": "Blocked: XSS attempt detected",
+            "owasp_category": OWASP_CATEGORIES["XSS"]
+        }), 403
 
     # Simulate CSRF Token Check
     if CSRF_TOKENS_REQUIRED and request.method == "POST":
         token = request.headers.get("X-CSRF-Token")
         if not token or token != "securetoken123":
             log_attack(ip, "CSRF", full_data)
-            return jsonify({"error": "Blocked: Missing/Invalid CSRF token"}), 403
+            return jsonify({
+                "error": "Blocked: Missing/Invalid CSRF token",
+                "owasp_category": OWASP_CATEGORIES["CSRF"]
+            }), 403
 
 # --- Routes ---
 @app.route('/')
@@ -77,13 +97,13 @@ def index():
 
 @app.route('/login', methods=['POST'])
 def login():
-    # Simulated login logic
     return jsonify({"message": "Login successful (if not blocked)."})
 
 @app.route('/search')
 def search():
     return jsonify({"message": "Search executed successfully (if not blocked)."})
 
-# --- Run ---
+# --- Render-compatible Run ---
 if __name__ == '__main__':
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))  # Use PORT from Render
+    app.run(host="0.0.0.0", port=port, debug=True)
