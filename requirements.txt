@@ -1,2 +1,5 @@
-flask
-requests
+Flask
+gunicorn
+dash
+pandas
+plotly
