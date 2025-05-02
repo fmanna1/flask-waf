@@ -58,7 +58,8 @@ CSRF_TOKENS_REQUIRED = True
 def waf_filter():
     if request.path.startswith('/dashboard') or request.path == '/tester':
         return
-    ip = request.remote_addr or "unknown"
+    #ip = request.remote_addr or "unknown"
+    ip = request.headers.get("X-Forwarded-For", request.remote_addr)
     full_data = str(request.args.to_dict()) + str(request.form.to_dict())
 
     for pattern in SQLI_PATTERNS:
