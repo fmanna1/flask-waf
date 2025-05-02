@@ -1,5 +1,6 @@
 Flask
-gunicorn
 dash
 pandas
 plotly
+gunicorn
+requests
