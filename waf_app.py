@@ -1,3 +1,4 @@
+
 from flask import Flask, request, jsonify, render_template_string
 import re
 import os
@@ -16,7 +17,7 @@ DB_FILE = "waf_logs.db"
 
 def init_db():
     with sqlite3.connect(DB_FILE) as conn:
-        conn.execute('''
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT,
@@ -25,32 +26,31 @@ def init_db():
                 ip TEXT,
                 payload TEXT
             )
-        ''')
+        """)
 
 init_db()
 
 def log_attack(level, attack_type, ip, payload):
     with sqlite3.connect(DB_FILE) as conn:
-        conn.execute('''
+        conn.execute("""
             INSERT INTO logs (timestamp, level, attack_type, ip, payload)
-            VALUES (?, ?, ?, ?, ?)''',
-            (datetime.utcnow().isoformat(), level, attack_type, ip, payload))
+            VALUES (?, ?, ?, ?, ?)""", (datetime.utcnow().isoformat(), level, attack_type, ip, payload))
 
 # --- Attack Patterns ---
 SQLI_PATTERNS = [
-    r"(?i)(\\bor\\b|\\band\\b).*(=|\\bLIKE\\b|\\bIN\\b|\\bIS\\b|\\bNULL\\b)",
-    r"(?i)(union(\\s+all)?(\\s+select))",
+    r"(?i)(\bor\b|\band\b).*(=|\bLIKE\b|\bIN\b|\bIS\b|\bNULL\b)",
+    r"(?i)(union(\s+all)?(\s+select))",
     r"(?i)select.+from",
-    r"(?i)insert\\s+into",
-    r"(?i)drop\\s+table",
-    r"(?i)'\\s*or\\s*'1'='1"
+    r"(?i)insert\s+into",
+    r"(?i)drop\s+table",
+    r"(?i)'\s*or\s*'1'='1"
 ]
 
 XSS_PATTERNS = [
     r"(?i)<script.*?>.*?</script.*?>",
     r"(?i)javascript:",
-    r"(?i)onerror\\s*=",
-    r"(?i)<img\\s+.*?on\\w+=.*?>"
+    r"(?i)onerror\s*=",
+    r"(?i)<img\s+.*?on\w+=.*?>"
 ]
 
 CSRF_TOKENS_REQUIRED = True
@@ -131,3 +131,7 @@ def tester():
         <br><br>
         <textarea rows="10" cols="100">{{result}}</textarea>
     """, result=result)
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
