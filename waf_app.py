@@ -1,7 +1,8 @@
-from flask import Flask, request, jsonify
+
+from flask import Flask, request, jsonify, render_template_string
 import re
 import logging
-import os
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -9,101 +10,109 @@ app = Flask(__name__)
 logging.basicConfig(
     filename="waf_logs.log",
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
+    format="%(asctime)s - %(levelname)s - Blocked %(message)s"
 )
 
-# --- OWASP Top 10 2021 Mapping ---
-OWASP_CATEGORIES = {
-    "SQL Injection": "A03:2021-Injection",
-    "XSS": "A03:2021-Injection (XSS included)",
-    "CSRF": "A01:2021-Broken Access Control (Token Validation)"
-}
-
-# --- Attack Signatures ---
+# --- Attack Patterns ---
 SQLI_PATTERNS = [
     r"(?i)(\bor\b|\band\b).*(=|\bLIKE\b|\bIN\b|\bIS\b|\bNULL\b)",
     r"(?i)(union(\s+all)?(\s+select))",
     r"(?i)select.+from",
     r"(?i)insert\s+into",
-    r"(?i)drop\s+table"
+    r"(?i)drop\s+table",
+    r"(?i)'\s*or\s*'1'='1"
 ]
 
 XSS_PATTERNS = [
     r"(?i)<script.*?>.*?</script.*?>",
     r"(?i)javascript:",
     r"(?i)onerror\s*=",
-    r"(?i)<img\s+.*?on\w+=.*?>",
-    r"(?i)<.*?(alert|prompt|confirm)\s*\(",
-    r"&lt;script&gt;"
+    r"(?i)<img\s+.*?on\w+=.*?>"
 ]
 
 CSRF_TOKENS_REQUIRED = True
 
-# --- Helper Functions ---
-def log_attack(ip, pattern_type, payload):
-    owasp_category = OWASP_CATEGORIES.get(pattern_type, "Uncategorized")
-    logging.warning(f"Blocked {pattern_type} attack (OWASP: {owasp_category}) from {ip}. Payload: {payload}")
-
-def contains_attack_patterns(payload, patterns):
-    for pattern in patterns:
-        if re.search(pattern, payload):
-            return pattern
-    return None
-
 # --- WAF Middleware ---
 @app.before_request
 def waf_filter():
-    ip = request.remote_addr
-    full_data = ""
+    if request.path == '/tester':
+        return  # Skip WAF for test form display
 
-    # Collect GET params
-    if request.args:
-        full_data += str(request.args.to_dict())
+    ip = request.remote_addr or "unknown"
+    full_data = str(request.args.to_dict()) + str(request.form.to_dict())
 
-    # Collect POST form data
-    if request.method == "POST":
-        full_data += str(request.form.to_dict())
+    for pattern in SQLI_PATTERNS:
+        if re.search(pattern, full_data):
+            logging.warning(f"SQL Injection attack from {ip}. Payload: {full_data}")
+            return jsonify({"error": "Blocked: SQL Injection detected"}), 403
 
-    # Check for SQL Injection
-    if pattern := contains_attack_patterns(full_data, SQLI_PATTERNS):
-        log_attack(ip, "SQL Injection", full_data)
-        return jsonify({
-            "error": "Blocked: SQL Injection detected",
-            "owasp_category": OWASP_CATEGORIES["SQL Injection"]
-        }), 403
+    for pattern in XSS_PATTERNS:
+        if re.search(pattern, full_data):
+            logging.warning(f"XSS attack from {ip}. Payload: {full_data}")
+            return jsonify({"error": "Blocked: XSS attempt detected"}), 403
 
-    # Check for XSS
-    if pattern := contains_attack_patterns(full_data, XSS_PATTERNS):
-        log_attack(ip, "XSS", full_data)
-        return jsonify({
-            "error": "Blocked: XSS attempt detected",
-            "owasp_category": OWASP_CATEGORIES["XSS"]
-        }), 403
-
-    # Simulate CSRF Token Check
     if CSRF_TOKENS_REQUIRED and request.method == "POST":
         token = request.headers.get("X-CSRF-Token")
         if not token or token != "securetoken123":
-            log_attack(ip, "CSRF", full_data)
-            return jsonify({
-                "error": "Blocked: Missing/Invalid CSRF token",
-                "owasp_category": OWASP_CATEGORIES["CSRF"]
-            }), 403
+            logging.warning(f"CSRF attack from {ip}. Payload: {full_data}")
+            return jsonify({"error": "Blocked: CSRF token missing or invalid"}), 403
 
 # --- Routes ---
 @app.route('/')
 def index():
     return "Welcome to the WAF-protected web app!"
 
-@app.route('/login', methods=['POST'])
-def login():
+@app.route('/waf/search')
+def waf_search():
+    return jsonify({"message": "Search executed (if not blocked)."})
+
+@app.route('/waf/login', methods=['POST'])
+def waf_login():
     return jsonify({"message": "Login successful (if not blocked)."})
 
-@app.route('/search')
-def search():
-    return jsonify({"message": "Search executed successfully (if not blocked)."})
+@app.route('/tester', methods=['GET', 'POST'])
+def tester():
+    result = ""
+    if request.method == "GET" and "q" in request.args:
+        from urllib.parse import urlencode
+        import requests
+        try:
+            q = request.args.get("q", "")
+            r = requests.get(f"http://127.0.0.1:5000/waf/search", params={"q": q})
+            result = f"GET /waf/search → {r.status_code} | {r.text}"
+        except Exception as e:
+            result = str(e)
+    elif request.method == "POST":
+        try:
+            uname = request.form.get("username", "")
+            pwd = request.form.get("password", "")
+            headers = {"X-CSRF-Token": request.form.get("csrf_token", "")}
+            data = {"username": uname, "password": pwd}
+            import requests
+            r = requests.post("http://127.0.0.1:5000/waf/login", data=data, headers=headers)
+            result = f"POST /waf/login → {r.status_code} | {r.text}"
+        except Exception as e:
+            result = str(e)
 
-# --- Render-compatible Run ---
+    return render_template_string("""
+        <h2>🧪 WAF Attack Tester</h2>
+        <form method="get">
+            <b>SQLi/XSS via GET</b><br>
+            <input type="text" name="q" placeholder="Payload here" size="60"/>
+            <input type="submit" value="Test GET" />
+        </form>
+        <br><hr><br>
+        <form method="post">
+            <b>CSRF via POST</b><br>
+            Username: <input type="text" name="username" />
+            Password: <input type="password" name="password" />
+            CSRF Token: <input type="text" name="csrf_token" value="securetoken123" />
+            <input type="submit" value="Test POST" />
+        </form>
+        <br><br>
+        <textarea rows="10" cols="100">{{result}}</textarea>
+    """, result=result)
+
+# --- Run ---
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))  # Use PORT from Render
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(debug=True, port=5000)
