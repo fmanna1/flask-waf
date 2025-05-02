@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify, render_template_string, redirect, url_for
 import re
 import os
 import sqlite3
@@ -89,47 +89,24 @@ def waf_search():
 def waf_login():
     return jsonify({"message": "Login successful (if not blocked)."})
 
-@app.route('/tester', methods=['GET', 'POST'])
+@app.route('/tester')
 def tester():
-    result = ""
-    if request.method == "GET" and "q" in request.args:
-        try:
-            q = request.args.get("q", "")
-            with app.test_client() as client:
-                r = client.get("/waf/search", query_string={"q": q})
-                result = f"GET /waf/search → {r.status_code} | {r.get_data(as_text=True)}"
-        except Exception as e:
-            result = str(e)
-    elif request.method == "POST":
-        try:
-            uname = request.form.get("username", "")
-            pwd = request.form.get("password", "")
-            headers = {"X-CSRF-Token": request.form.get("csrf_token", "")}
-            data = {"username": uname, "password": pwd}
-            with app.test_client() as client:
-                r = client.post("/waf/login", data=data, headers=headers)
-                result = f"POST /waf/login → {r.status_code} | {r.get_data(as_text=True)}"
-        except Exception as e:
-            result = str(e)
-
     return render_template_string("""
         <h2>🧪 WAF Attack Tester</h2>
-        <form method="get">
+        <form method="get" action="/waf/search">
             <b>SQLi/XSS via GET</b><br>
             <input type="text" name="q" placeholder="Payload here" size="60"/>
             <input type="submit" value="Test GET" />
         </form>
         <br><hr><br>
-        <form method="post">
+        <form method="post" action="/waf/login">
             <b>CSRF via POST</b><br>
             Username: <input type="text" name="username" />
             Password: <input type="password" name="password" />
             CSRF Token: <input type="text" name="csrf_token" value="securetoken123" />
             <input type="submit" value="Test POST" />
         </form>
-        <br><br>
-        <textarea rows="10" cols="100">{{result}}</textarea>
-    """, result=result)
+    """)
 
 # --- Dash Setup ---
 dash_app = dash.Dash(__name__, server=app, routes_pathname_prefix='/dashboard/')
