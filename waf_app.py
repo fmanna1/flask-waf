@@ -1,8 +1,8 @@
-
 from flask import Flask, request, jsonify, render_template_string
 import re
 import logging
 from datetime import datetime
+import os
 
 app = Flask(__name__)
 
@@ -115,4 +115,5 @@ def tester():
 
 # --- Run ---
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(debug=False, host="0.0.0.0", port=port)
