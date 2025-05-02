@@ -1,4 +1,3 @@
-
 from flask import Flask, request, jsonify, render_template_string
 import re
 import os
@@ -38,19 +37,19 @@ def log_attack(level, attack_type, ip, payload):
 
 # --- Attack Patterns ---
 SQLI_PATTERNS = [
-    r"(?i)(\bor\b|\band\b).*(=|\bLIKE\b|\bIN\b|\bIS\b|\bNULL\b)",
-    r"(?i)(union(\s+all)?(\s+select))",
+    r"(?i)(\\bor\\b|\\band\\b).*(=|\\bLIKE\\b|\\bIN\\b|\\bIS\\b|\\bNULL\\b)",
+    r"(?i)(union(\\s+all)?(\\s+select))",
     r"(?i)select.+from",
-    r"(?i)insert\s+into",
-    r"(?i)drop\s+table",
-    r"(?i)'\s*or\s*'1'='1"
+    r"(?i)insert\\s+into",
+    r"(?i)drop\\s+table",
+    r"(?i)'\\s*or\\s*'1'='1"
 ]
 
 XSS_PATTERNS = [
     r"(?i)<script.*?>.*?</script.*?>",
     r"(?i)javascript:",
-    r"(?i)onerror\s*=",
-    r"(?i)<img\s+.*?on\w+=.*?>"
+    r"(?i)onerror\\s*=",
+    r"(?i)<img\\s+.*?on\\w+=.*?>"
 ]
 
 CSRF_TOKENS_REQUIRED = True
@@ -131,6 +130,71 @@ def tester():
         <br><br>
         <textarea rows="10" cols="100">{{result}}</textarea>
     """, result=result)
+
+# --- Dash Setup ---
+dash_app = dash.Dash(__name__, server=app, routes_pathname_prefix='/dashboard/')
+dash_app.title = "WAF Dashboard"
+
+def query_logs():
+    with sqlite3.connect(DB_FILE) as conn:
+        df = pd.read_sql_query("SELECT timestamp, level, attack_type, ip, payload FROM logs", conn)
+    return df
+
+def generate_recommendations(df):
+    if df.empty:
+        return "✅ All clear. No suspicious activity logged."
+    recs = []
+    ip_counts = df['ip'].value_counts()
+    csrf_count = len(df[df["attack_type"] == "CSRF"])
+    sqli_count = len(df[df["attack_type"] == "SQL Injection"])
+    if any(ip_counts > 5):
+        recs.append("⚠️ Consider rate-limiting requests from high-frequency IPs.")
+    if csrf_count > 3:
+        recs.append("🛡️ Rotate CSRF tokens more often.")
+    if sqli_count > 5:
+        recs.append("🔒 SQLi detected frequently. Improve input validation.")
+    return "\n".join(recs)
+
+dash_app.layout = html.Div([
+    html.H1("🛡️ WAF Dashboard", style={"textAlign": "center"}),
+    dcc.Interval(id='interval', interval=5000, n_intervals=0),
+    dcc.Dropdown(id='attack-type-dropdown', options=[
+        {"label": "SQL Injection", "value": "SQL Injection"},
+        {"label": "XSS", "value": "XSS"},
+        {"label": "CSRF", "value": "CSRF"}
+    ], multi=True, placeholder="Filter attack types..."),
+    dcc.Graph(id='attack-count-chart'),
+    dash_table.DataTable(id='log-table', columns=[
+        {"name": "Timestamp", "id": "timestamp"},
+        {"name": "Attack Type", "id": "attack_type"},
+        {"name": "IP", "id": "ip"},
+        {"name": "Payload", "id": "payload"},
+    ], page_size=10, style_cell={'textAlign': 'left'}),
+    html.Pre(id='recommendation-panel')
+])
+
+@dash_app.callback(
+    [dash.dependencies.Output("log-table", "data"),
+     dash.dependencies.Output("attack-count-chart", "figure"),
+     dash.dependencies.Output("recommendation-panel", "children")],
+    [dash.dependencies.Input("attack-type-dropdown", "value"),
+     dash.dependencies.Input("interval", "n_intervals")]
+)
+def update_dashboard(filter_types, _):
+    df = query_logs()
+    if filter_types:
+        df = df[df["attack_type"].isin(filter_types)]
+    if df.empty:
+        return [], {
+            "layout": {
+                "title": "No logs",
+                "xaxis": {"visible": False},
+                "yaxis": {"visible": False},
+                "annotations": [{"text": "No data", "xref": "paper", "yref": "paper", "showarrow": False}]
+            }
+        }, "✅ No activity"
+    fig = px.histogram(df, x="attack_type", color="attack_type", title="Attack Frequency")
+    return df.to_dict("records"), fig, generate_recommendations(df)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
